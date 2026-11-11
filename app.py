@@ -166,6 +166,16 @@ def history_row_html(job):
     )
 
 
+PRIMARY_LINK = (
+    "padding:12px 16px;border-radius:8px;background:var(--button-primary-background-fill);"
+    "color:var(--button-primary-text-color);font-weight:700;text-decoration:none;text-align:center;"
+)
+SECONDARY_LINK = (
+    "display:inline-block;padding:8px 12px;border-radius:8px;border:1px solid var(--border-color-primary);"
+    "color:var(--body-text-color);font-size:14px;font-weight:600;text-decoration:none;"
+)
+
+
 def job_detail_html(job_id):
     """선택한 기록의 상세 화면."""
     try:
@@ -177,48 +187,82 @@ def job_detail_html(job_id):
     def url(name):
         return html.escape(history.file_url(job_id, name), quote=True)
 
-    def heading(text):
-        return f'<h3 style="margin:24px 0 8px;font-size:16px;">{text}</h3>'
+    def image_box(name, label, width, height):
+        box = f"width:{width}px;height:{height}px;margin:0;border-radius:8px;background:var(--background-fill-secondary);display:block;"
+        if name:
+            content = (
+                f'<a href="{url(name)}" target="_blank" rel="noopener">'
+                f'<img src="{url(name)}" alt="{label}" loading="lazy" style="{box}object-fit:contain;"></a>'
+            )
+        else:
+            content = f'<div style="{box}"></div>'
+        return f'<div>{content}<div style="font-size:12px;opacity:.6;margin-top:4px;text-align:center;">{label}</div></div>'
 
-    def image_grid(names):
-        items = "".join(
-            f'<a href="{url(name)}" target="_blank" rel="noopener">'
-            f'<img src="{url(name)}" alt="" loading="lazy" style="width:100%;height:160px;object-fit:contain;'
-            'background:rgba(127,127,127,.12);border-radius:6px;display:block;"></a>'
-            for name in names
+    def fact(label, value):
+        return (
+            '<div style="display:flex;justify-content:space-between;gap:12px;padding:10px 0;'
+            'border-bottom:1px solid var(--border-color-primary);font-size:14px;">'
+            f'<span style="opacity:.65;">{label}</span><b>{value}</b></div>'
         )
-        return f'<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:8px;">{items}</div>'
 
     cards = job["cards"]
-    parts = [
-        f'<p style="font-size:15px;"><b>{html.escape(job["created_at"])}</b> · 카드 {len(cards)}장 · '
-        f'카드당 {job["duration"]}초 · 상태: <b>{html.escape(job["status"])}</b></p>'
-    ]
+    title = html.escape(cards[0]["name"]) if cards else ""
+    if len(cards) > 1:
+        title += f" 외 {len(cards) - 1}장"
+    color = STATUS_COLORS.get(job["status"], "#6b7280")
+
     if job["final"]:
-        parts.append(heading("완성된 영상"))
-        parts.append(f'<video controls preload="metadata" src="{url(job["final"])}" style="width:100%;max-height:420px;background:#000;border-radius:6px;"></video>')
-        parts.append(f'<p><a href="{url(job["final"])}" download>완성 영상 다운로드</a></p>')
+        media = (
+            f'<video controls preload="metadata" src="{url(job["final"])}" '
+            'style="width:100%;aspect-ratio:16/9;object-fit:contain;background:#000;border-radius:10px;display:block;"></video>'
+        )
+        download = f'<a href="{url(job["final"])}" download style="{PRIMARY_LINK}margin-top:16px;display:block;">완성 영상 다운로드</a>'
+    else:
+        media = (
+            '<div style="width:100%;aspect-ratio:16/9;display:flex;align-items:center;justify-content:center;'
+            'background:var(--background-fill-secondary);border-radius:10px;opacity:.7;">완성된 영상이 없습니다</div>'
+        )
+        download = ""
 
-    parts.append(heading("원본 카드"))
-    parts.append(image_grid([card["original"] for card in cards]))
-
-    expanded = [card["expanded"] for card in cards if card["expanded"]]
-    if expanded:
-        parts.append(heading("16:9 변환 이미지"))
-        parts.append(image_grid(expanded))
+    top = (
+        '<div style="display:flex;flex-wrap:wrap;gap:24px;align-items:flex-start;">'
+        f'<div style="flex:1 1 480px;min-width:0;max-width:680px;">{media}</div>'
+        '<div style="flex:1 1 240px;min-width:0;">'
+        f'<div style="color:{color};font-weight:700;font-size:14px;">{html.escape(job["status"])}</div>'
+        f'<div style="font-size:18px;font-weight:700;margin:4px 0 12px;overflow-wrap:anywhere;">{title}</div>'
+        f'{fact("작업일시", html.escape(job["created_at"]))}'
+        f'{fact("카드 수", f"{len(cards)}장")}'
+        f'{fact("카드당 길이", str(job["duration"]) + "초")}'
+        f"{download}</div></div>"
+    )
 
     rows = []
     for i, card in enumerate(cards):
         if card["error"]:
-            state = f'실패: {html.escape(card["error"])}'
+            state = f'<b style="color:{STATUS_COLORS[history.FAILED]};">실패</b>'
+            detail = f'<div style="font-size:13px;opacity:.75;margin-top:4px;overflow-wrap:anywhere;">{html.escape(card["error"])}</div>'
         elif card["video"]:
-            state = f'완료 · <a href="{url(card["video"])}" download>영상 다운로드</a>'
+            state = f'<a href="{url(card["video"])}" download style="{SECONDARY_LINK}">영상 받기</a>'
+            detail = ""
         else:
-            state = "미완료"
-        rows.append(f'<li style="margin:4px 0;">{i + 1:03d} {html.escape(card["name"])} — {state}</li>')
-    parts.append(heading("카드별 결과"))
-    parts.append(f'<ul style="list-style:none;padding:0;margin:0;">{"".join(rows)}</ul>')
-    return "".join(parts)
+            state = '<span style="opacity:.6;">미완료</span>'
+            detail = ""
+        rows.append(
+            '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:16px;padding:14px 0;'
+            'border-top:1px solid var(--border-color-primary);">'
+            f'<div style="flex:1 1 180px;min-width:0;"><div style="font-size:12px;opacity:.6;">카드 {i + 1}</div>'
+            f'<div style="font-weight:600;overflow-wrap:anywhere;">{html.escape(card["name"])}</div>{detail}</div>'
+            f'{image_box(card["original"], "원본", 90, 90)}'
+            f'{image_box(card["expanded"], "16:9 변환", 160, 90)}'
+            f'<div style="flex:0 0 96px;text-align:center;">{state}</div>'
+            "</div>"
+        )
+
+    return (
+        f"{top}"
+        f'<div style="font-size:16px;font-weight:700;margin:32px 0 12px;">카드별 결과</div>'
+        f'{"".join(rows)}'
+    )
 
 
 def refresh_history():
@@ -304,7 +348,8 @@ with gr.Blocks(title="카드뉴스 영상 변환기") as demo:
         @gr.render(inputs=history_state)
         def history_view(state):
             if state["selected"]:
-                back_btn = gr.Button("← 목록으로", size="sm")
+                with gr.Row():
+                    back_btn = gr.Button("← 목록으로", size="sm", scale=0, min_width=120)
                 back_btn.click(refresh_history, outputs=[history_state])
                 gr.HTML(job_detail_html(state["selected"]), padding=False)
                 return
