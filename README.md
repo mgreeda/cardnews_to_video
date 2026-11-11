@@ -14,6 +14,7 @@ Render.com에 배포해두면 준현님 컴퓨터가 꺼져 있어도 팀원 누
    - `ANTHROPIC_API_KEY`
    - `APP_USERNAME`
    - `APP_PASSWORD`
+   - 작업 기록 보관(Hugging Face 비공개 Bucket): `HF_NAMESPACE`, `HF_S3_ACCESS_KEY_ID`, `HF_S3_SECRET_ACCESS_KEY`, `HF_BUCKET`
 5. 저장하면 Render가 자동으로 빌드/배포하고 URL이 생성됨
 6. 이후로는 이 브랜치에 푸시할 때마다 Render가 자동으로 재배포함 (수동 업로드 불필요)
 7. 생성된 URL을 팀원들에게 공유

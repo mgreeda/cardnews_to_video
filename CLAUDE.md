@@ -72,4 +72,15 @@ Grok으로 미세 모션 영상 생성 → ffmpeg로 병합 → 완성된 16:9 �
 
 - Grok이 재배치 프롬프트를 못 따라줄 경우 PIL 레이어 분리 방식(요소별 크롭 후 재배치)으로
   전환하는 대안이 있음.
-- 다수 동시 사용 시 작업 큐(줄서기) 도입 고려 (현재는 동시 작업이 같은 인스턴스에서 겹쳐 돌아감).
+
+## 동시 사용과 작업 기록
+
+- 변환은 최대 `MAX_CONCURRENT_JOBS`(3)개 동시 실행, 초과분은 Gradio 큐에서 대기.
+- 작업마다 `DATA_DIR/jobs/<작업ID>/`에 원본·중간 결과·`final.mp4`·`job.json`을 저장 (`pipeline/history.py`).
+- Render 무료는 잠들거나 재시작할 때 파일이 지워지므로, 끝난 작업은 Hugging Face 비공개 Storage Bucket에 보관
+  (`pipeline/storage.py`, S3 호환 API). 환경변수 `HF_NAMESPACE`·`HF_S3_ACCESS_KEY_ID`·`HF_S3_SECRET_ACCESS_KEY`·`HF_BUCKET`.
+  없으면 로컬 저장만 동작.
+- 보관 상한: 100건 또는 90GB 중 먼저 닿는 쪽에서 오래된 기록부터 영구 삭제 (`MAX_JOBS`, `MAX_BYTES`).
+- `job.json`은 마지막에 올려 완성된 기록만 목록에 나온다. 파일은 서버가 받아서 앱 로그인 뒤에서만 제공
+  (S3 임시 링크는 Hugging Face 문서에 지원이 명시되어 있지 않아 쓰지 않음).
+- 검증: `python test_app.py` (가짜 공급자·가짜 저장소, 유료 호출 없음).
