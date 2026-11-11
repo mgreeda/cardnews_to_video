@@ -33,12 +33,13 @@ def finish_job(job, status):
     job["status"] = status
     history.save_job(job)
     if not storage.enabled():
-        return ""
+        # Render 서버 파일은 재시작 때 지워지므로 미설정이면 알린다
+        return " (저장소 미설정: 기록이 보관되지 않습니다. 영상은 지금 바로 받아두세요)" if os.environ.get("RENDER") else ""
     try:
         storage.upload_job(job["id"], history.job_dir(job["id"]))
         return ""
     except Exception as e:
-        print(f"storage upload failed for {job['id']}: {type(e).__name__}", flush=True)
+        print(f"storage upload failed for {job['id']}: {storage.describe_error(e)}", flush=True)
         job["upload_failed"] = True
         history.save_job(job)
         return " (작업 기록 저장 실패: 영상은 지금 바로 받아두세요)"
@@ -266,12 +267,23 @@ def job_detail_html(job_id):
 
 
 def refresh_history():
-    """탭을 열 때마다 최신 목록을 보여준다."""
+    """탭을 열 때마다 저장소 상태와 최신 목록을 보여준다."""
+    connected, message = storage.check()
+    state = {"selected": None, "connected": connected, "message": message, "error": False}
     try:
-        return {"jobs": history.all_jobs(HISTORY_LIMIT), "selected": None, "error": False}
+        return {**state, "jobs": history.all_jobs(HISTORY_LIMIT)}
     except Exception as e:
-        print(f"history list failed: {type(e).__name__}", flush=True)
-        return {"jobs": history.list_jobs()[:HISTORY_LIMIT], "selected": None, "error": True}
+        print(f"history list failed: {storage.describe_error(e)}", flush=True)
+        return {**state, "jobs": history.list_jobs()[:HISTORY_LIMIT], "error": True}
+
+
+def storage_status_html(connected, message):
+    if connected:
+        color, text = STATUS_COLORS[history.DONE], f"저장소 연결됨 · {html.escape(message)}"
+    else:
+        color = STATUS_COLORS[history.FAILED]
+        text = f"저장소 연결 안 됨 ({html.escape(message)}) · 지금 만든 기록은 서버가 재시작되면 사라집니다"
+    return f'<div style="color:{color};font-size:14px;font-weight:700;padding:4px 0 8px;">{text}</div>'
 
 
 with gr.Blocks(title="카드뉴스 영상 변환기") as demo:
@@ -354,6 +366,8 @@ with gr.Blocks(title="카드뉴스 영상 변환기") as demo:
                 gr.HTML(job_detail_html(state["selected"]), padding=False)
                 return
 
+            if "connected" in state:
+                gr.HTML(storage_status_html(state["connected"], state["message"]), padding=False)
             if state.get("error"):
                 gr.Markdown("**저장소에 연결하지 못했습니다. 잠시 후 탭을 다시 열어주세요.**")
             jobs = state["jobs"]

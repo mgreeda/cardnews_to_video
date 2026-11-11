@@ -123,6 +123,7 @@ class FakeS3:
         self.objects = {}
         self.order = []
         self.fail_on = None
+        self.deny_write = False
 
     def upload_file(self, path, bucket, key, ExtraArgs=None, Config=None):
         if self.fail_on and key.endswith(self.fail_on):
@@ -136,6 +137,11 @@ class FakeS3:
 
     def paginate(self, Bucket, Prefix):
         yield {"Contents": [{"Key": k, "Size": len(v)} for k, v in self.objects.items() if k.startswith(Prefix)]}
+
+    def put_object(self, Bucket, Key, Body):
+        if self.deny_write:
+            raise type("E", (Exception,), {"response": {"Error": {"Code": "AccessDenied"}}})()
+        self.objects[Key] = Body
 
     def get_object(self, Bucket, Key):
         return {"Body": io.BytesIO(self.objects[Key])}
@@ -205,6 +211,22 @@ assert "저장 실패" in notice
 assert fail_id not in [job["id"] for job in storage.list_jobs(100)]
 assert fail_id in [job["id"] for job in history.all_jobs(200)]  # 서버에 있는 동안은 보여준다
 fake.fail_on = None
+
+# 저장소 점검: 정상, 쓰기 거부, 환경변수 누락을 구분한다
+connected, message = storage.check()
+assert connected and "건" in message and "health/ping.txt" not in fake.objects
+fake.deny_write = True
+assert storage.check() == (False, "AccessDenied")
+fake.deny_write = False
+assert "저장소 연결 안 됨 (AccessDenied)" in app.storage_status_html(False, "AccessDenied")
+saved_bucket = os.environ.pop("HF_BUCKET")
+assert storage.check() == (False, "환경변수 없음: HF_BUCKET")
+os.environ["RENDER"] = "true"
+assert "저장소 미설정" in app.finish_job(history.load_job(fail_id), history.DONE)
+del os.environ["RENDER"]
+os.environ["HF_BUCKET"] = "  d\n"
+assert storage.enabled() and storage.bucket() == "d"  # 붙여넣기 공백 제거
+os.environ["HF_BUCKET"] = saved_bucket
 
 # 저장소 연결이 끊겨도 탭이 깨지지 않는다
 storage._client = None

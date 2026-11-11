@@ -24,15 +24,41 @@ _client = None
 
 
 def enabled():
-    return all(os.environ.get(name) for name in ENV_NAMES)
+    return all(os.environ.get(name, "").strip() for name in ENV_NAMES)
+
+
+def _env(name):
+    # 붙여넣을 때 섞인 공백이나 줄바꿈 제거
+    return os.environ[name].strip()
 
 
 def bucket():
-    return os.environ["HF_BUCKET"]
+    return _env("HF_BUCKET")
 
 
 def endpoint():
-    return f"https://{os.environ['HF_NAMESPACE']}.s3.hf.co"
+    return f"https://{_env('HF_NAMESPACE')}.s3.hf.co"
+
+
+def describe_error(error):
+    """비밀값 없이 원인만 담은 짧은 설명."""
+    code = getattr(error, "response", {}).get("Error", {}).get("Code")
+    return code or type(error).__name__
+
+
+def check():
+    """실제로 쓰고 지워보고 (연결 여부, 설명)을 돌려준다."""
+    missing = [name for name in ENV_NAMES if not os.environ.get(name, "").strip()]
+    if missing:
+        return False, "환경변수 없음: " + ", ".join(missing)
+    try:
+        key = "health/ping.txt"
+        client().put_object(Bucket=bucket(), Key=key, Body=b"ok")
+        client().delete_object(Bucket=bucket(), Key=key)
+        count = sum(1 for job in _scan().values() if job["has_meta"])
+        return True, f"저장된 기록 {count}건"
+    except Exception as e:
+        return False, describe_error(e)
 
 
 def client():
@@ -42,8 +68,8 @@ def client():
             _client = boto3.client(
                 "s3",
                 endpoint_url=endpoint(),
-                aws_access_key_id=os.environ["HF_S3_ACCESS_KEY_ID"],
-                aws_secret_access_key=os.environ["HF_S3_SECRET_ACCESS_KEY"],
+                aws_access_key_id=_env("HF_S3_ACCESS_KEY_ID"),
+                aws_secret_access_key=_env("HF_S3_SECRET_ACCESS_KEY"),
                 config=Config(
                     region_name="us-east-1",
                     s3={"addressing_style": "path"},
