@@ -6,6 +6,7 @@ import io
 import json
 import os
 import shutil
+import subprocess
 import tempfile
 import threading
 
@@ -36,9 +37,24 @@ def fake_merge(videos, output):
         return write(output, f.read())
 
 
-app.GrokClient = lambda: object()
-app.analyzer.analyze_image = lambda path: {"expand_prompt": "x", "video_prompt": "y"}
-app.expand.expand_to_16x9 = lambda client, path, prompt, save: (write(save, "image"), path)
+class FakeGrok:
+    @staticmethod
+    def image_data_uri(path):
+        return f"data:{path}"
+
+
+app.GrokClient = FakeGrok
+real_merge = app.merger.merge_videos
+relayouts = []
+
+
+def fake_relayout(client, path, prompt, save, ratio):
+    relayouts.append(ratio)
+    return write(save, "image"), path
+
+
+app.analyzer.analyze_image = lambda path, ratio: {"expand_prompt": "x", "video_prompt": "y"}
+app.expand.relayout_image = fake_relayout
 app.video_gen.generate_video = fake_video
 app.merger.merge_videos = fake_merge
 
@@ -110,6 +126,47 @@ row = app.history_row_html({
     "cards": [{"name": "<img src=x>.png"}, {"name": "b.png"}],
 })
 assert "<img" not in row and "외 1장" in row
+
+# 비율 선택: 원본은 재배치를 건너뛰고, 그 외에는 고른 비율로 재배치한다
+relayouts.clear()
+list(app.start_conversion([card("o.png")], 9, app.ORIGINAL))
+original_job = by_duration(9)
+assert relayouts == [] and original_job["ratio"] == app.ORIGINAL
+assert original_job["cards"][0]["expanded"] is None and original_job["status"] == history.DONE
+assert "원본 그대로" in app.job_detail_html(original_job["id"])
+assert app.job_detail_html(original_job["id"]).count("<img") == 1
+list(app.start_conversion([card("v.png")], 10, "9:16"))
+assert relayouts == ["9:16"] and by_duration(10)["ratio"] == "9:16"
+assert "9:16 변환" in app.job_detail_html(by_duration(10)["id"])
+
+# 길이 값은 허용 범위로 제한한다
+assert app.parse_seconds("7") == 7 and app.parse_seconds(99) == 10 and app.parse_seconds(0) == 3
+assert app.parse_seconds(None) == 5 and app.parse_seconds("abc") == 5
+
+assert app.parse_ratio("9:16 세로") == "9:16" and app.parse_ratio("원본 그대로") == app.ORIGINAL
+assert app.parse_ratio("1:1") == "1:1" and app.parse_ratio("7:7") == "16:9" and app.parse_ratio(None) == "16:9"
+
+# 비율별 재배치 지시문
+landscape = app.analyzer._build_expand_prompt("bg", "subject", "t", "b", "", False, "16:9")
+portrait = app.analyzer._build_expand_prompt("bg", "subject", "t", "b", "", False, "9:16")
+assert "16:9 widescreen" in landscape and "right half" in landscape
+assert "9:16 canvas" in portrait and "upper part" in portrait and "right half" not in portrait
+
+# 크기가 다른 영상은 첫 영상 크기로 맞춰 합친다
+clip_dir = tempfile.mkdtemp()
+
+
+def make_clip(name, size):
+    path = os.path.join(clip_dir, name)
+    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", f"color=c=blue:s={size}:d=1",
+                    "-pix_fmt", "yuv420p", path], check=True)
+    return path
+
+
+merged = real_merge([make_clip("a.mp4", "320x400"), make_clip("b.mp4", "640x360")], os.path.join(clip_dir, "out", "final.mp4"))
+assert app.merger._video_size(merged) == (320, 400)
+same = real_merge([make_clip("c.mp4", "320x180"), make_clip("d.mp4", "320x180")], os.path.join(clip_dir, "out", "same.mp4"))
+assert app.merger._video_size(same) == (320, 180)
 
 # 삭제 대상 선정: 오래된 순, 방금 올린 작업은 보호
 assert storage.select_deletions({"a": 1, "b": 1, "c": 1}, "c", max_jobs=2, max_bytes=99) == ["a"]

@@ -6,6 +6,7 @@ import os
 import anthropic
 
 MODEL = "claude-sonnet-4-6"
+ORIGINAL = "original"
 
 VISUAL_TYPES = ["3d_medical", "2d_illustration", "photo_person", "text_only"]
 
@@ -33,12 +34,12 @@ COMMON_SUFFIX = (
     "with only the faintest hint of life. No camera movement. No zoom. No pan. No text "
     "modification. Do NOT add, generate, or introduce any new objects, shapes, people, "
     "icons, particles, or elements that are not already present in the source image — "
-    "preserve the original composition exactly. Cinematic still. 16:9. "
+    "preserve the original composition exactly. Cinematic still. {ratio_text}"
     "Do not generate any audio, sound effects, music, or dialogue — completely silent video."
 )
 
 
-ANALYSIS_SYSTEM_PROMPT = """당신은 카드뉴스 이미지를 분석해서, 이 이미지를 16:9로 재배치하고
+ANALYSIS_SYSTEM_PROMPT = """당신은 카드뉴스 이미지를 분석해서, 이 이미지를 지정된 비율로 재배치하고
 영상으로 만드는 데 필요한 정보를 추출하는 어시스턴트입니다.
 주어진 이미지를 보고 아래 JSON 형식으로만 답변하세요. 다른 설명은 추가하지 마세요.
 
@@ -61,18 +62,32 @@ visual_type 분류 기준:
 
 
 def _build_expand_prompt(background_description, main_visual_description,
-                         title_text, body_text, brand_text, has_icon_row):
+                         title_text, body_text, brand_text, has_icon_row, ratio):
+    width, height = (float(n) for n in ratio.split(":"))
+    landscape = width > height
+    canvas = f"{ratio} widescreen" if landscape else ratio
+    if landscape:
+        subject_line = (
+            f"- Take the main visual subject ({main_visual_description}) and enlarge it, moving it to "
+            "fill the right half of the new wider canvas, extending from top to bottom."
+        )
+        text_area = "left-center area of the canvas, vertically centered"
+    else:
+        subject_line = (
+            f"- Take the main visual subject ({main_visual_description}) and enlarge it, moving it to "
+            "fill the upper part of the new canvas from edge to edge."
+        )
+        text_area = "lower-center area of the canvas, horizontally centered"
     lines = [
-        "Completely redesign this card's layout for a 16:9 widescreen canvas. "
+        f"Completely redesign this card's layout for a {canvas} canvas. "
         "Do NOT simply pad or crop the original square image — this must be a full layout "
         "re-composition that reuses ONLY the exact elements already present in the original, "
         "repositioning them as described below. Do NOT invent or add any element that does not "
         "exist in the original image.",
         "- Keep the logo/brand badge fixed in the top-left corner, same size and position.",
-        f"- Take the main visual subject ({main_visual_description}) and enlarge it, moving it to "
-        "fill the right half of the new wider canvas, extending from top to bottom.",
+        subject_line,
         f"- Move the highlighted title bar(s) (\"{title_text}\") and the body paragraph "
-        f"(\"{body_text}\") to the left-center area of the canvas, vertically centered, keeping the "
+        f"(\"{body_text}\") to the {text_area}, keeping the "
         "exact same Korean text, font style, and highlight colors.",
     ]
     if has_icon_row:
@@ -80,7 +95,7 @@ def _build_expand_prompt(background_description, main_visual_description,
     if brand_text:
         lines.append(f"- Keep the brand wordmark (\"{brand_text}\") fixed in the bottom-right corner.")
     lines.append(
-        f"- Extend the background seamlessly across the new wide canvas, matching the existing "
+        f"- Extend the background seamlessly across the new canvas, matching the existing "
         f"background color, style, and atmosphere ({background_description})."
     )
     lines.append("Do not add any new graphic elements, objects, people, or text that are not in the original.")
@@ -103,7 +118,8 @@ def _encode_image(image_path):
     return mime_type, data
 
 
-def analyze_image(image_path):
+def analyze_image(image_path, ratio="16:9"):
+    """ratio는 "16:9" 같은 비율 또는 재배치를 건너뛰는 ORIGINAL."""
     client = _load_client()
     mime_type, image_data = _encode_image(image_path)
 
@@ -146,15 +162,19 @@ def analyze_image(image_path):
     brand_text = result.get("brand_text", "")
     has_icon_row = bool(result.get("has_icon_row", False))
 
-    expand_prompt = _build_expand_prompt(
-        background_description=background_description,
-        main_visual_description=main_visual_description,
-        title_text=title_text,
-        body_text=body_text,
-        brand_text=brand_text,
-        has_icon_row=has_icon_row,
-    )
-    video_prompt = f"{VIDEO_PROMPT_BY_TYPE[visual_type]} {COMMON_SUFFIX}"
+    expand_prompt = None
+    if ratio != ORIGINAL:
+        expand_prompt = _build_expand_prompt(
+            background_description=background_description,
+            main_visual_description=main_visual_description,
+            title_text=title_text,
+            body_text=body_text,
+            brand_text=brand_text,
+            has_icon_row=has_icon_row,
+            ratio=ratio,
+        )
+    ratio_text = "" if ratio == ORIGINAL else f"{ratio}. "
+    video_prompt = f"{VIDEO_PROMPT_BY_TYPE[visual_type]} {COMMON_SUFFIX.format(ratio_text=ratio_text)}"
 
     return {
         "background_description": background_description,

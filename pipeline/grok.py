@@ -1,4 +1,5 @@
 import base64
+import mimetypes
 import os
 import time
 
@@ -28,28 +29,32 @@ class GrokClient:
         self.session = requests.Session()
         self.session.headers["Authorization"] = f"Bearer {self.api_key}"
 
-    def expand_to_16x9(self, image_path, prompt):
-        mime = "image/png" if image_path.lower().endswith(".png") else "image/jpeg"
+    @staticmethod
+    def image_data_uri(image_path):
+        mime = mimetypes.guess_type(image_path)[0]
+        if mime not in ("image/jpeg", "image/png", "image/webp"):
+            mime = "image/jpeg"
         with open(image_path, "rb") as f:
             image_b64 = base64.standard_b64encode(f.read()).decode("utf-8")
-        data_uri = f"data:{mime};base64,{image_b64}"
+        return f"data:{mime};base64,{image_b64}"
 
+    def relayout_image(self, image_path, prompt, aspect_ratio):
         payload = {
             "model": IMAGE_EDIT_MODEL,
-            "image": {"url": data_uri, "type": "image_url"},
+            "image": {"url": self.image_data_uri(image_path), "type": "image_url"},
             "prompt": prompt,
-            "aspect_ratio": "16:9",
+            "aspect_ratio": aspect_ratio,
         }
         result = self._post(ENDPOINTS["image_edit"], payload)
         return self._extract_image_url(result)
 
-    def generate_video(self, image_url, prompt, duration, aspect_ratio="16:9", resolution="720p"):
+    def generate_video(self, image_url, prompt, duration, resolution="720p"):
+        # 이미지 기반 영상은 입력 이미지 비율을 그대로 따르므로 aspect_ratio를 보내지 않는다
         payload = {
             "model": VIDEO_MODEL,
             "image": {"url": image_url},
             "prompt": prompt,
             "duration": duration,
-            "aspect_ratio": aspect_ratio,
             "resolution": resolution,
         }
         result = self._post(ENDPOINTS["video_generate"], payload)

@@ -37,7 +37,7 @@ def save_job(job):
     os.replace(temp_path, path)
 
 
-def create_job(image_paths, duration):
+def create_job(image_paths, duration, ratio="16:9"):
     """작업 폴더를 만들고 원본을 복사한다. 작업끼리 파일이 겹치지 않도록 폴더를 분리한다."""
     now = datetime.now(KST)
     job_id = f"{now:%Y%m%d-%H%M%S}-{uuid.uuid4().hex[:6]}"
@@ -59,6 +59,7 @@ def create_job(image_paths, duration):
         "id": job_id,
         "created_at": now.strftime("%Y-%m-%d %H:%M"),
         "duration": duration,
+        "ratio": ratio,
         "status": RUNNING,
         "final": None,
         "thumbnail": _make_thumbnail(job_id, image_paths[0]),

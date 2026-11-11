@@ -9,6 +9,101 @@ load_dotenv()
 from pipeline import analyzer, expand, history, merger, storage, video_gen
 from pipeline.grok import GrokClient
 
+ORIGINAL = analyzer.ORIGINAL
+RATIO_CHOICES = [
+    ("원본 그대로", ORIGINAL),
+    ("16:9 가로", "16:9"),
+    ("9:16 세로", "9:16"),
+    ("1:1 정사각", "1:1"),
+    ("4:3 가로", "4:3"),
+    ("3:4 세로", "3:4"),
+    ("3:2 가로", "3:2"),
+    ("2:3 세로", "2:3"),
+]
+
+RATIO_BY_LABEL = dict(RATIO_CHOICES)
+DEFAULT_RATIO_LABEL = "16:9 가로"
+MIN_SECONDS = 3
+MAX_SECONDS = 10
+DEFAULT_SECONDS = 5
+
+PICKER_CSS = """
+position: relative; box-sizing: border-box; padding: var(--block-padding); background: var(--block-background-fill);
+border: 1px solid var(--block-border-color); border-radius: var(--block-radius);
+.pk-label { font-size: 14px; color: var(--block-title-text-color); margin-bottom: 8px; }
+.pk-card { width: 100%; display: flex; justify-content: space-between; align-items: center; padding: 10px 16px;
+  min-height: 42px; background: var(--input-background-fill); color: var(--body-text-color);
+  border: 1px solid var(--input-border-color); border-radius: var(--input-radius); cursor: pointer; font-size: var(--input-text-size); }
+.pk-card[aria-expanded="true"] { border-color: var(--color-accent); }
+.pk-pop { position: absolute; top: 100%; left: 0; right: 0; margin-top: 6px; padding: 14px 16px; z-index: 50;
+  background: var(--background-fill-primary); border: 1px solid var(--color-accent); border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .18); }
+.pk-pop { min-width: 260px; }
+.pk-pop.pk-right { left: auto; }
+.pk-head { display: flex; justify-content: space-between; font-size: 14px; margin-bottom: 10px; color: var(--body-text-color); }
+.pk-range { width: 100%; margin: 0; accent-color: var(--color-accent); cursor: pointer; }
+.pk-ticks { display: flex; justify-content: space-between; margin-top: 6px; font-size: 12px; opacity: .65; color: var(--body-text-color); }
+.pk-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+.pk-opt { padding: 9px 10px; text-align: left; border-radius: 8px; border: 1px solid var(--input-border-color);
+  background: var(--input-background-fill); color: var(--body-text-color); cursor: pointer; font-size: 14px; }
+.pk-opt.on { border-color: var(--color-accent); color: var(--color-accent); font-weight: 700; }
+"""
+PICKER_JS_COMMON = """
+const find = (selector) => element.querySelector(selector);
+const setOpen = (open) => {
+  find('.pk-pop').hidden = !open;
+  find('.pk-card').setAttribute('aria-expanded', String(open));
+};
+const choose = (value) => { props.value = value; trigger('change'); };
+element.addEventListener('click', (event) => {
+  if (event.target.closest('.pk-card')) setOpen(find('.pk-pop').hidden);
+});
+document.addEventListener('click', (event) => {
+  if (!element.contains(event.target) && find('.pk-pop')) setOpen(false);
+});
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && find('.pk-pop')) setOpen(false);
+});
+"""
+TICKS = "".join(f"<span>{seconds}</span>" for seconds in range(MIN_SECONDS, MAX_SECONDS + 1))
+LENGTH_PICKER_HTML = f"""
+<div class="pk-label">길이</div>
+<button type="button" class="pk-card" aria-expanded="false"><span class="pk-value">${{value}}초</span><span>▾</span></button>
+<div class="pk-pop" hidden>
+  <div class="pk-head"><span>카드당 길이</span><b class="pk-pop-value">${{value}}초</b></div>
+  <input class="pk-range" type="range" min="{MIN_SECONDS}" max="{MAX_SECONDS}" step="1" value="${{value}}" aria-label="카드당 영상 길이">
+  <div class="pk-ticks">{TICKS}</div>
+</div>
+"""
+LENGTH_PICKER_JS = PICKER_JS_COMMON + """
+element.addEventListener('input', (event) => {
+  if (!event.target.matches('.pk-range')) return;
+  find('.pk-value').textContent = event.target.value + '초';
+  find('.pk-pop-value').textContent = event.target.value + '초';
+});
+element.addEventListener('change', (event) => {
+  if (event.target.matches('.pk-range')) choose(Number(event.target.value));
+});
+"""
+RATIO_OPTIONS = "".join(
+    f'<button type="button" class="pk-opt" data-value="{label}">{label}</button>' for label, _ in RATIO_CHOICES
+)
+RATIO_PICKER_HTML = f"""
+<div class="pk-label">종횡비</div>
+<button type="button" class="pk-card" aria-expanded="false"><span class="pk-value">${{value}}</span><span>▾</span></button>
+<div class="pk-pop pk-right" hidden><div class="pk-options">{RATIO_OPTIONS}</div></div>
+"""
+RATIO_PICKER_JS = PICKER_JS_COMMON + """
+element.addEventListener('click', (event) => {
+  const option = event.target.closest('.pk-opt');
+  if (option) { choose(option.dataset.value); return; }
+  if (event.target.closest('.pk-card')) {
+    const current = find('.pk-value').textContent;
+    element.querySelectorAll('.pk-opt').forEach((o) => o.classList.toggle('on', o.dataset.value === current));
+  }
+});
+"""
+
 # 동시에 돌릴 수 있는 변환 작업 수. 초과분은 Gradio 큐에서 순서를 기다린다.
 MAX_CONCURRENT_JOBS = 3
 HISTORY_LIMIT = storage.MAX_JOBS
@@ -45,7 +140,24 @@ def finish_job(job, status):
         return " (작업 기록 저장 실패: 영상은 지금 바로 받아두세요)"
 
 
-def start_conversion(order, duration_per_card):
+def parse_seconds(value):
+    """화면 밖에서 보낸 값으로 비용이 커지지 않도록 허용 범위로 제한한다."""
+    try:
+        return max(MIN_SECONDS, min(MAX_SECONDS, int(value)))
+    except (TypeError, ValueError):
+        return DEFAULT_SECONDS
+
+
+def parse_ratio(value):
+    """화면 라벨이나 비율 값을 비율 값으로 바꾼다. 모르는 값은 기본 16:9."""
+    if value in RATIO_BY_LABEL:
+        return RATIO_BY_LABEL[value]
+    return value if value in RATIO_BY_LABEL.values() else "16:9"
+
+
+def start_conversion(order, duration_per_card, ratio="16:9"):
+    duration_per_card = parse_seconds(duration_per_card)
+    ratio = parse_ratio(ratio)
     if not order:
         yield "업로드된 이미지가 없습니다.", gr.update(value=0), "", None, [], []
         return
@@ -60,7 +172,7 @@ def start_conversion(order, duration_per_card):
 
     try:
         client = GrokClient()
-        job = history.create_job(order, duration_per_card)
+        job = history.create_job(order, duration_per_card, ratio)
     except Exception as e:
         yield f"오류: {e}", gr.update(value=0), status_text(), None, expanded_paths, video_paths
         return
@@ -75,24 +187,28 @@ def start_conversion(order, duration_per_card):
             try:
                 status_lines[i] = f"{card_id} ⏳ 분석중"
                 yield f"{i + 1}/{total} 분석 중...", gr.update(value=(i / total) * 100), status_text(), None, expanded_paths, video_paths
-                analysis = analyzer.analyze_image(path)
+                analysis = analyzer.analyze_image(path, ratio)
 
-                status_lines[i] = f"{card_id} ✅ 분석완료 → ⏳ 16:9 확장중"
-                yield f"{i + 1}/{total} 16:9 확장 중...", gr.update(value=(i / total) * 100), status_text(), None, expanded_paths, video_paths
-                expanded_name = f"{card_id}_expanded.jpg"
-                expanded_path, expanded_url = expand.expand_to_16x9(
-                    client, path, analysis["expand_prompt"],
-                    history.job_file(job_id, expanded_name),
-                )
-                expanded_paths = expanded_paths + [expanded_path]
-                card["expanded"] = expanded_name
-                history.save_job(job)
+                if ratio == ORIGINAL:
+                    # 재배치를 건너뛰면 영상이 원본 이미지 비율을 그대로 따른다
+                    video_source = client.image_data_uri(path)
+                else:
+                    status_lines[i] = f"{card_id} ✅ 분석완료 → ⏳ {ratio} 변환중"
+                    yield f"{i + 1}/{total} {ratio} 변환 중...", gr.update(value=(i / total) * 100), status_text(), None, expanded_paths, video_paths
+                    expanded_name = f"{card_id}_expanded.jpg"
+                    expanded_path, video_source = expand.relayout_image(
+                        client, path, analysis["expand_prompt"],
+                        history.job_file(job_id, expanded_name), ratio,
+                    )
+                    expanded_paths = expanded_paths + [expanded_path]
+                    card["expanded"] = expanded_name
+                    history.save_job(job)
 
                 status_lines[i] = f"{card_id} ✅ 분석완료 → ✅ 확장완료 → ⏳ 영상생성중"
                 yield f"{i + 1}/{total} 영상 생성 중...", gr.update(value=(i / total) * 100), status_text(), None, expanded_paths, video_paths
                 video_name = f"{card_id}_video.mp4"
                 card_video_path = video_gen.generate_video(
-                    client, expanded_url, analysis["video_prompt"], duration_per_card,
+                    client, video_source, analysis["video_prompt"], duration_per_card,
                     history.job_file(job_id, video_name),
                 )
                 card_videos.append(card_video_path)
@@ -206,16 +322,25 @@ def job_detail_html(job_id):
             f'<span style="opacity:.65;">{label}</span><b>{value}</b></div>'
         )
 
+    ratio = job.get("ratio", "16:9")  # 비율 선택 기능 이전 기록은 전부 16:9
+
+    def converted_box(card):
+        if ratio == ORIGINAL:
+            return ""
+        width, height = (float(n) for n in ratio.split(":"))
+        return image_box(card["expanded"], f"{ratio} 변환", round(90 * width / height), 90)
+
     cards = job["cards"]
     title = html.escape(cards[0]["name"]) if cards else ""
     if len(cards) > 1:
         title += f" 외 {len(cards) - 1}장"
     color = STATUS_COLORS.get(job["status"], "#6b7280")
+    ratio_label = "원본 그대로" if ratio == ORIGINAL else ratio
 
     if job["final"]:
         media = (
             f'<video controls preload="metadata" src="{url(job["final"])}" '
-            'style="width:100%;aspect-ratio:16/9;object-fit:contain;background:#000;border-radius:10px;display:block;"></video>'
+            'style="display:block;width:auto;height:auto;max-width:100%;max-height:480px;margin:0 auto;background:#000;border-radius:10px;"></video>'
         )
         download = f'<a href="{url(job["final"])}" download style="{PRIMARY_LINK}margin-top:16px;display:block;">완성 영상 다운로드</a>'
     else:
@@ -232,6 +357,7 @@ def job_detail_html(job_id):
         f'<div style="color:{color};font-weight:700;font-size:14px;">{html.escape(job["status"])}</div>'
         f'<div style="font-size:18px;font-weight:700;margin:4px 0 12px;overflow-wrap:anywhere;">{title}</div>'
         f'{fact("작업일시", html.escape(job["created_at"]))}'
+        f'{fact("비율", ratio_label)}'
         f'{fact("카드 수", f"{len(cards)}장")}'
         f'{fact("카드당 길이", str(job["duration"]) + "초")}'
         f"{download}</div></div>"
@@ -254,7 +380,7 @@ def job_detail_html(job_id):
             f'<div style="flex:1 1 180px;min-width:0;"><div style="font-size:12px;opacity:.6;">카드 {i + 1}</div>'
             f'<div style="font-weight:600;overflow-wrap:anywhere;">{html.escape(card["name"])}</div>{detail}</div>'
             f'{image_box(card["original"], "원본", 90, 90)}'
-            f'{image_box(card["expanded"], "16:9 변환", 160, 90)}'
+            f"{converted_box(card)}"
             f'<div style="flex:0 0 96px;text-align:center;">{state}</div>'
             "</div>"
         )
@@ -324,7 +450,20 @@ with gr.Blocks(title="카드뉴스 영상 변환기") as demo:
             upload.change(add_images, inputs=[upload, order_state], outputs=[order_state])
 
             gr.Markdown("## 2. 옵션")
-            duration_slider = gr.Slider(minimum=3, maximum=10, value=5, step=1, label="카드당 영상 길이 (초)")
+            with gr.Row():
+                duration_select = gr.HTML(
+                    value=DEFAULT_SECONDS, html_template=LENGTH_PICKER_HTML, css_template=PICKER_CSS,
+                    js_on_load=LENGTH_PICKER_JS, scale=1, min_width=200,
+                )
+                ratio_select = gr.HTML(
+                    value=DEFAULT_RATIO_LABEL, html_template=RATIO_PICKER_HTML, css_template=PICKER_CSS,
+                    js_on_load=RATIO_PICKER_JS, scale=1, min_width=200,
+                )
+            original_note = gr.Markdown(
+                "원본 그대로는 재배치 없이 영상화합니다. 카드 크기가 서로 다르면 첫 카드 크기에 맞춰 검은 여백이 들어갑니다.",
+                visible=False,
+            )
+            ratio_select.change(lambda ratio: gr.update(visible=parse_ratio(ratio) == ORIGINAL), inputs=[ratio_select], outputs=[original_note])
 
             gr.Markdown("## 3. 실행 및 진행 상황")
             start_btn = gr.Button("영상 변환 시작", variant="primary")
@@ -336,7 +475,7 @@ with gr.Blocks(title="카드뉴스 영상 변환기") as demo:
             result_video = gr.Video(label="완성된 영상")
 
             gr.Markdown("## 5. 중간 결과 (디버깅용) — 어느 단계에서 잘못됐는지 확인")
-            gr.Markdown("### 카드별 16:9 변환 이미지")
+            gr.Markdown("### 카드별 변환 이미지")
             expanded_gallery = gr.Gallery(label="변환된 이미지", columns=4, height=220)
 
             video_state = gr.State([])
@@ -353,7 +492,7 @@ with gr.Blocks(title="카드뉴스 영상 변환기") as demo:
 
             start_btn.click(
                 start_conversion,
-                inputs=[order_state, duration_slider],
+                inputs=[order_state, duration_select, ratio_select],
                 outputs=[progress_text, progress_bar, card_status, result_video, expanded_gallery, video_state],
                 concurrency_limit=MAX_CONCURRENT_JOBS,
             )
