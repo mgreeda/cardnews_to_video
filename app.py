@@ -287,105 +287,112 @@ def storage_status_html(connected, message):
 
 
 with gr.Blocks(title="카드뉴스 영상 변환기") as demo:
-    gr.Markdown("# 카드뉴스 영상 변환기")
+    title = gr.HTML(
+        '<h1 title="처음 화면으로" style="cursor:pointer;margin:0;font-size:26px;font-weight:700;">카드뉴스 영상 변환기</h1>',
+        padding=False,
+    )
 
-    with gr.Tab("영상 변환"):
-        order_state = gr.State([])
+    with gr.Tabs() as tabs:
+        with gr.Tab("영상 변환", id="convert"):
+            order_state = gr.State([])
 
-        gr.Markdown("## 1. 이미지 업로드")
-        upload = gr.File(file_count="multiple", file_types=["image"], label="카드뉴스 이미지 업로드 (JPG, PNG)")
+            gr.Markdown("## 1. 이미지 업로드")
+            upload = gr.File(file_count="multiple", file_types=["image"], label="카드뉴스 이미지 업로드 (JPG, PNG)")
 
-        @gr.render(inputs=order_state)
-        def card_grid(order):
-            if not order:
-                gr.Markdown("_업로드된 이미지가 없습니다._")
-                return
-            for i, path in enumerate(order):
-                with gr.Row():
-                    gr.Image(value=path, height=80, width=80, show_label=False, interactive=False)
-                    gr.Markdown(f"**{i + 1:03d}** &nbsp; {os.path.basename(path)}")
-                    up_btn = gr.Button("▲", scale=0, min_width=40, interactive=i > 0)
-                    down_btn = gr.Button("▼", scale=0, min_width=40, interactive=i < len(order) - 1)
-                    up_btn.click(
-                        lambda o, idx=i: move_card(idx, -1, o),
-                        inputs=[order_state],
-                        outputs=[order_state],
-                    )
-                    down_btn.click(
-                        lambda o, idx=i: move_card(idx, 1, o),
-                        inputs=[order_state],
-                        outputs=[order_state],
-                    )
+            @gr.render(inputs=order_state)
+            def card_grid(order):
+                if not order:
+                    gr.Markdown("_업로드된 이미지가 없습니다._")
+                    return
+                for i, path in enumerate(order):
+                    with gr.Row():
+                        gr.Image(value=path, height=80, width=80, show_label=False, interactive=False)
+                        gr.Markdown(f"**{i + 1:03d}** &nbsp; {os.path.basename(path)}")
+                        up_btn = gr.Button("▲", scale=0, min_width=40, interactive=i > 0)
+                        down_btn = gr.Button("▼", scale=0, min_width=40, interactive=i < len(order) - 1)
+                        up_btn.click(
+                            lambda o, idx=i: move_card(idx, -1, o),
+                            inputs=[order_state],
+                            outputs=[order_state],
+                        )
+                        down_btn.click(
+                            lambda o, idx=i: move_card(idx, 1, o),
+                            inputs=[order_state],
+                            outputs=[order_state],
+                        )
 
-        upload.change(add_images, inputs=[upload, order_state], outputs=[order_state])
+            upload.change(add_images, inputs=[upload, order_state], outputs=[order_state])
 
-        gr.Markdown("## 2. 옵션")
-        duration_slider = gr.Slider(minimum=3, maximum=10, value=5, step=1, label="카드당 영상 길이 (초)")
+            gr.Markdown("## 2. 옵션")
+            duration_slider = gr.Slider(minimum=3, maximum=10, value=5, step=1, label="카드당 영상 길이 (초)")
 
-        gr.Markdown("## 3. 실행 및 진행 상황")
-        start_btn = gr.Button("영상 변환 시작", variant="primary")
-        progress_text = gr.Textbox(label="진행 상황", interactive=False)
-        progress_bar = gr.Slider(minimum=0, maximum=100, value=0, label="진행률(%)", interactive=False)
-        card_status = gr.Textbox(label="카드별 단계 상태", lines=8, interactive=False)
+            gr.Markdown("## 3. 실행 및 진행 상황")
+            start_btn = gr.Button("영상 변환 시작", variant="primary")
+            progress_text = gr.Textbox(label="진행 상황", interactive=False)
+            progress_bar = gr.Slider(minimum=0, maximum=100, value=0, label="진행률(%)", interactive=False)
+            card_status = gr.Textbox(label="카드별 단계 상태", lines=8, interactive=False)
 
-        gr.Markdown("## 4. 결과")
-        result_video = gr.Video(label="완성된 영상")
+            gr.Markdown("## 4. 결과")
+            result_video = gr.Video(label="완성된 영상")
 
-        gr.Markdown("## 5. 중간 결과 (디버깅용) — 어느 단계에서 잘못됐는지 확인")
-        gr.Markdown("### 카드별 16:9 변환 이미지")
-        expanded_gallery = gr.Gallery(label="변환된 이미지", columns=4, height=220)
+            gr.Markdown("## 5. 중간 결과 (디버깅용) — 어느 단계에서 잘못됐는지 확인")
+            gr.Markdown("### 카드별 16:9 변환 이미지")
+            expanded_gallery = gr.Gallery(label="변환된 이미지", columns=4, height=220)
 
-        video_state = gr.State([])
+            video_state = gr.State([])
 
-        gr.Markdown("### 카드별 생성된 영상")
+            gr.Markdown("### 카드별 생성된 영상")
 
-        @gr.render(inputs=video_state)
-        def video_grid(videos):
-            if not videos:
-                gr.Markdown("_아직 생성된 영상이 없습니다._")
-                return
-            for i, vid_path in enumerate(videos):
-                gr.Video(value=vid_path, label=f"{i + 1:03d} 카드 영상", height=220)
+            @gr.render(inputs=video_state)
+            def video_grid(videos):
+                if not videos:
+                    gr.Markdown("_아직 생성된 영상이 없습니다._")
+                    return
+                for i, vid_path in enumerate(videos):
+                    gr.Video(value=vid_path, label=f"{i + 1:03d} 카드 영상", height=220)
 
-        start_btn.click(
-            start_conversion,
-            inputs=[order_state, duration_slider],
-            outputs=[progress_text, progress_bar, card_status, result_video, expanded_gallery, video_state],
-            concurrency_limit=MAX_CONCURRENT_JOBS,
-        )
+            start_btn.click(
+                start_conversion,
+                inputs=[order_state, duration_slider],
+                outputs=[progress_text, progress_bar, card_status, result_video, expanded_gallery, video_state],
+                concurrency_limit=MAX_CONCURRENT_JOBS,
+            )
 
-    with gr.Tab("작업 기록") as history_tab:
-        history_state = gr.State({"jobs": [], "selected": None})
+        with gr.Tab("작업 기록") as history_tab:
+            history_state = gr.State({"jobs": [], "selected": None})
 
-        @gr.render(inputs=history_state)
-        def history_view(state):
-            if state["selected"]:
-                with gr.Row():
-                    back_btn = gr.Button("← 목록으로", size="sm", scale=0, min_width=120)
-                back_btn.click(refresh_history, outputs=[history_state])
-                gr.HTML(job_detail_html(state["selected"]), padding=False)
-                return
+            @gr.render(inputs=history_state)
+            def history_view(state):
+                if state["selected"]:
+                    with gr.Row():
+                        back_btn = gr.Button("← 목록으로", size="sm", scale=0, min_width=120)
+                    back_btn.click(refresh_history, outputs=[history_state])
+                    gr.HTML(job_detail_html(state["selected"]), padding=False)
+                    return
 
-            if "connected" in state:
-                gr.HTML(storage_status_html(state["connected"], state["message"]), padding=False)
-            if state.get("error"):
-                gr.Markdown("**저장소에 연결하지 못했습니다. 잠시 후 탭을 다시 열어주세요.**")
-            jobs = state["jobs"]
-            if not jobs:
-                gr.Markdown("_아직 작업 기록이 없습니다. 영상 변환을 실행하면 여기에 쌓입니다._")
-                return
-            gr.HTML(history_header_html(), padding=False)
-            for job in jobs:
-                with gr.Row(equal_height=True):
-                    gr.HTML(history_row_html(job), scale=1, padding=False)
-                    view_btn = gr.Button("보기", scale=0, min_width=80)
-                    view_btn.click(
-                        lambda current, job_id=job["id"]: {**current, "selected": job_id},
-                        inputs=[history_state],
-                        outputs=[history_state],
-                    )
+                if "connected" in state:
+                    gr.HTML(storage_status_html(state["connected"], state["message"]), padding=False)
+                if state.get("error"):
+                    gr.Markdown("**저장소에 연결하지 못했습니다. 잠시 후 탭을 다시 열어주세요.**")
+                jobs = state["jobs"]
+                if not jobs:
+                    gr.Markdown("_아직 작업 기록이 없습니다. 영상 변환을 실행하면 여기에 쌓입니다._")
+                    return
+                gr.HTML(history_header_html(), padding=False)
+                for job in jobs:
+                    with gr.Row(equal_height=True):
+                        gr.HTML(history_row_html(job), scale=1, padding=False)
+                        view_btn = gr.Button("보기", scale=0, min_width=80)
+                        view_btn.click(
+                            lambda current, job_id=job["id"]: {**current, "selected": job_id},
+                            inputs=[history_state],
+                            outputs=[history_state],
+                        )
 
-        history_tab.select(refresh_history, outputs=[history_state])
+            history_tab.select(refresh_history, outputs=[history_state])
+
+    # 새로고침하면 진행 중인 변환이 끊기므로 탭만 전환한다
+    title.click(lambda: gr.Tabs(selected="convert"), outputs=[tabs])
 
 if __name__ == "__main__":
     history.mark_interrupted()
